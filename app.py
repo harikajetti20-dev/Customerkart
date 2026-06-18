@@ -1,8 +1,10 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, auth
 import psycopg2
+from werkzeug.utils import secure_filename
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -13,6 +15,12 @@ CORS(app)
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
 
+# -----------------------------------
+# Upload folder for images
+# -----------------------------------
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # -----------------------------------
 # Database Connection Function
@@ -25,7 +33,6 @@ def get_db_connection():
         password="harika",
         port=5432
     )
-
 
 # -----------------------------------
 # Token Verification
@@ -43,14 +50,12 @@ def verify_token():
     except Exception:
         return None, jsonify({"message": "Invalid token"}), 403
 
-
 # -----------------------------------
 # Home Route
 # -----------------------------------
 @app.route("/")
 def home():
     return "CustomerKart Backend Running 🚀"
-
 
 # -----------------------------------
 # Get All Products
@@ -70,7 +75,7 @@ def get_products():
                 "product_id": row[0],
                 "name": row[1],
                 "price": row[2],
-                "image_url": row[3]
+                "image_url": row[3]  # This will now point to uploaded images
             })
 
         cursor.close()
@@ -80,7 +85,6 @@ def get_products():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # -----------------------------------
 # Search Products
@@ -118,6 +122,47 @@ def search_products():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# -----------------------------------
+# Add New Product with Image Upload
+# -----------------------------------
+@app.route("/products/upload", methods=["POST"])
+def add_product_with_image():
+    try:
+        name = request.form.get("name")
+        price = request.form.get("price")
+        description = request.form.get("description")
+        image = request.files.get("image")
+
+        filename = None
+        if image:
+            filename = secure_filename(image.filename)
+            image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            image_url = f"/uploads/{filename}"
+        else:
+            image_url = None
+
+        # Insert into DB
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO products (name, price, description, image_url) VALUES (%s,%s,%s,%s)",
+            (name, price, description, image_url)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({"message": "Product uploaded successfully", "image_url": image_url})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500      
+
+# -----------------------------------
+# Serve uploaded images
+# -----------------------------------
+@app.route("/uploads/<filename>")
+def serve_image(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # -----------------------------------
 # Get User Orders (Protected)
@@ -133,21 +178,12 @@ def get_orders():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-
         cursor.execute(
             "SELECT id, product_name, price FROM orders WHERE user_id = %s",
             (user_id,)
         )
-
         rows = cursor.fetchall()
-
-        orders = []
-        for row in rows:
-            orders.append({
-                "id": row[0],
-                "product_name": row[1],
-                "price": row[2]
-            })
+        orders = [{"id": r[0], "product_name": r[1], "price": r[2]} for r in rows]
 
         cursor.close()
         conn.close()
@@ -157,11 +193,10 @@ def get_orders():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 # -----------------------------------
 # Add New Order (Protected)
 # -----------------------------------
-@app.route("/orders", methods=["GET"])
+@app.route("/orders", methods=["POST"])
 def add_order():
     decoded_token, error_response, status_code = verify_token()
     if error_response:
@@ -176,14 +211,11 @@ def add_order():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-
         cursor.execute(
             "INSERT INTO orders (user_id, product_name, price) VALUES (%s, %s, %s)",
             (user_id, product_name, price)
         )
-
         conn.commit()
-
         cursor.close()
         conn.close()
 
@@ -191,7 +223,6 @@ def add_order():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # -----------------------------------
 # Run Server

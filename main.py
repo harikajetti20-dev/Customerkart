@@ -4,13 +4,13 @@ app = Flask(__name__)
 
 
 
-@app.route("/get_sample_name",methods=['GET'])
+@app.route("/get_sample_name", methods=['GET'])
 def send_sample_name():
-    return {
+    return ({
         "SHOPNAME": "CustomerKart",
         "OWNER": "Harika",
         "LOCATION": "Hyderabad"
-    }
+    })
 
 
 
